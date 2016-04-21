@@ -42,4 +42,9 @@ class CrawlerPipeline(object):
 			fout = open('out/queryPackageXq/' + item['title']+'.txt','w')
 			fout.write(self.getOutputStr(item))
 			fout.close()
+		else:
+			fout = open('out/' + item['title']+'.txt','w')
+			fout.write(self.getOutputStr(item))
+			fout.close()
+
 		return item
