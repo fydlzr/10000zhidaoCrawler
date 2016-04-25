@@ -11,9 +11,11 @@ from crawler.items import CrawlerItem
 from selenium import selenium
 import re, urllib,urllib2,json
 
+findPhoneID = re.compile('var materialId = \'(.*)\'')
 findSXP = re.compile('SXP(\d{14})')
 broadbandUrlPrefix = 'http://js.189.cn/nmall/product/broadbandInfo/SXP'
 queryPackageXqPrefix = 'http://js.189.cn/nmall/product/queryPackageXq/SXP'
+phonePrefix = 'http://js.189.cn/nmall/product/phone/'
 
 def has_tr_no_displayNone(tag):
 	return tag.name=='tr' and (tag.has_attr('style')==False or (tag.has_attr('style') and tag['style']!='display:none;'))
@@ -27,29 +29,43 @@ def getList(tag):
 	for s in tag.stripped_strings:
 		l.append(s)
 	return l
+def getList2(tag):
+	l = []
+	for s in tag.stripped_strings:
+		l.append(s)
+	return l
+def getList(tags):
+	l = []
 
+	for tag in tags:
+		flag = False
+		v = ''
+		for s in tag.stripped_strings:
+			if flag==False:
+				l.append(s)
+				flag = True
+			else:
+				v += s+'  '
+		l.append(v)
+	return l
 
+def post(url, parameter):
+	data = urllib.urlencode(parameter)
+	req = urllib2.Request(url, data)
+	response = urllib2.urlopen(req)
+	return response.read()
 
 class A189spSpider(scrapy.Spider):
 	name = "189sp"
 	allowed_domains = ["js.189.cn"]
 	
 	start_urls = (
-		# 'http://js.189.cn/nmall/broadband/index',
-		# 'http://js.189.cn/nmall/product/broadbandInfo/SXP20151225004497.html',
-		# 'http://js.189.cn/nmall/productList/index?queryType=packageCondition&match4G=4G',
+		'http://js.189.cn/nmall/broadband/index',
+		'http://js.189.cn/flowZone/index.jsp',
+		'http://js.189.cn/nmall/productList/index?queryType=packageCondition&match4G=4G',
 		'http://js.189.cn/nmall/productList/index?queryType=mobileCondition&mobile=apple',
+		# 'http://js.189.cn/nmall/product/phone/SXP20151109003782.html#dinfo_2',
 	)
-
-	# def __init__(self):
-	# 	self.verificationErrors = []
- #        self.selenium = selenium("localhost", 4444, "*firefox", "http://www.jb51.net")
- #        self.selenium.start()
- #    def __del__(self):
- #        self.selenium.stop()
- #        print self.verificationErrors
-
-	
 
 	def parse(self, response):
 		items = []
@@ -79,22 +95,90 @@ class A189spSpider(scrapy.Spider):
 				yield Request(broadbandUrlPrefix+sxp+'.html', callback=self.parse)
 		#套餐
 		elif 'queryType=packageCondition&match4G=4G' in response.url:
+			# values = {'parameter':'FF32=&FF33=',\
+			# 'areaCode':'025',\
+			# 'sortFlag':'xl',\
+			# 'cssFlag':'down',\
+			# 'pageindex' : str(pageindex),\
+			# 'tableNumber':'03'}
+			# sxps = self.get_SXP_LIST('http://js.189.cn/nmall/product/queryPackageList.do', values)
+			# for sxp in sxps:
+			# 	yield Request(queryPackageXqPrefix+sxp+'.html', callback=self.parse)
 			res_items = self.process_TaoCan(1)
 			for it in res_items:
 				items.append(it)
 				yield it
-		#终端
+
+		#终端get_ZhongDuan_SXPList
 		elif 'queryType=mobileCondition' in response.url:
-			res_items = self.process_ZhongDuan(1)
-			for it in res_items:
-				items.append(it)
-				yield it
+			values = {'parameter':'FF20=&FF21=&FF22=&FF23=&FF24=&FF25=&FF26=',\
+			'sortFlag':'',\
+			'cssFlag':'',\
+			'pageindex' : '1',\
+			'tableNumber':'02'}		
+
+			sxps = self.get_SXP_LIST('http://js.189.cn/nmall/product/queryProductList.do', values)
+			for sxp in sxps:
+				yield Request(phonePrefix+sxp+'.html#dinfo_2', callback=self.parse)
+		#终端ext
+		elif 'phone' in response.url:
+			phoneId = findPhoneID.search(response.body)
+			if phoneId!=None:
+				phoneId = phoneId.group(1)
+			bodys = response.body.split('<html>')
+			
+			for body in bodys:
+				soup = bs(body)
+				item = CrawlerItem()
+				baby_name_res = soup.find('div', class_='baby_name')
+				title = getFirstString(baby_name_res)
+
+				li_s = soup.find('div', class_='baby_info').find_all('li', recursive=False)
+				kv = self.getInfoBox(li_s,len(li_s))
+
+				item['url'] = response.url
+				if title !=None:
+					item['title'] = title
+				item['table'] = json.dumps(kv, ensure_ascii=False ).encode('utf-8')
+				if phoneId!=None:
+					values = {'materialId':phoneId}
+					item['table2'] = post('http://js.189.cn/nmall/item/phone/queryMaterialExtendValuePage.json', values)
+				item['need_know'] = ''
+				item['faq'] = ''
+				items.append(item)
+				yield item
+				break
+		elif 'flowZone' in response.url:
+			values = {'typeForAD':'100', 'ADType':'100'}
+			info = post('http://js.189.cn/flowZone/flowZone_findAdInfoBySourceNew.action', values)
+			flow_json = json.loads(info)
+			for flow in flow_json['TSR_RESULTARRAY']:
+				item = CrawlerItem()
+				item['url'] = 'flowZone' + ':' + flow['ADId']
+				item['title'] = flow['ADDesc']
+				item['table'] = json.dumps(flow, ensure_ascii=False).encode('utf-8')
+				item['table2'] = ''
+				item['need_know'] = ''
+				item['faq'] = ''
+				items.append(item)
+				yield item
+
 
 		# sxps = findSXP.findall(response.body)
 		# for sxp in sxps:
 		# 	yield Request(queryPackageXqPrefix+sxp+'.html', callback=self.parse)
 
-	
+	def getInfoBox(self, tr_s, keyCount):
+		tableContent = getList(tr_s)
+		kv = {}
+		for i in range(0,2*keyCount-1):
+			if i%2 == 0:
+				kv[tableContent[i]] = tableContent[i+1]
+		kv[tableContent[2*keyCount-2]] = ''
+		for i in range(2*keyCount-1, len(tableContent)):
+			if i < len(tableContent) and 2*keyCount-2<len(tableContent):
+				kv[tableContent[2*keyCount-2]] += tableContent[i]
+		return kv
 
 	def process(self,item,soup,table_1_res,kd_xqinfo_res,baby_info_res):
 
@@ -107,24 +191,14 @@ class A189spSpider(scrapy.Spider):
 		if kd_xqinfo_res!=None:
 			item['title'] = kd_xqinfo_res.find('h2').string.strip()
 			tr_s = kd_xqinfo_res.find_all(has_tr_no_displayNone)
-			tableContent = []
-			for tr in tr_s:
-				for ss in tr.stripped_strings:
-					tableContent.append(ss)
-			keyCount = 4
-			kv = {}
-			for i in range(0,2*keyCount-1):
-				if i%2 == 0:
-					kv[tableContent[i]] = tableContent[i+1]
-			for i in range(2*keyCount-1, len(tableContent)):
-					kv[tableContent[2*keyCount-2]] += tableContent[i]
+			kv = self.getInfoBox(tr_s, 4)
 			item['table'] = json.dumps(kv, ensure_ascii=False).encode('utf-8')
 		
 
 		if table_1_res != None:
 			keylist=[]
 			valuelist=[]
-			trs = table_1_res.find_all('tr')
+			trs = table_1_res.find_all('tr', recursive=False)
 			if trs !=None:
 				for tr in trs:
 					if item['title'] =='':
@@ -135,7 +209,7 @@ class A189spSpider(scrapy.Spider):
 							item['title'] = getFirstString(tr)
 							continue
 					else:
-						tds = tr.find_all('td')
+						tds = tr.find_all('td', recursive=False)
 						if len(tds)>3:
 							if len(keylist)==0:
 								for td in tds:
@@ -156,7 +230,7 @@ class A189spSpider(scrapy.Spider):
 			if item['title']=='':
 				baby_name_res = soup.find('div', class_='baby_name')
 				item['title'] = item['title'] = getFirstString(tr)
-			li_s = baby_info_res.find_all('li')
+			li_s = baby_info_res.find_all('li', recursive=False)
 			kv = {}
 			for li in li_s:
 				ss = getList(li)
@@ -187,12 +261,7 @@ class A189spSpider(scrapy.Spider):
 			'pageindex' : str(pageindex),\
 			'tableNumber':'03'}
 
-		data = urllib.urlencode(values)
-		req = urllib2.Request('http://js.189.cn/nmall/product/queryPackageList.do', data)
-		response = urllib2.urlopen(req)
-		the_page = response.read()
-		pj = json.loads(the_page)
-
+		pj = json.loads(post('http://js.189.cn/nmall/product/queryPackageList.do', values))
 		pageTotal = pj['pageCount']
 
 		for offer in pj['offerList']:
@@ -210,34 +279,19 @@ class A189spSpider(scrapy.Spider):
 
 		return res_items
 
-	def process_ZhongDuan(self, pageindex):
-		res_items = []
-		values = {'parameter':'FF20=&FF21=&FF22=&FF23=&FF24=&FF25=&FF26=',\
-			'sortFlag':'',\
-			'cssFlag':'',\
-			'pageindex' : str(pageindex),\
-			'tableNumber':'02'}		
-
-		data = urllib.urlencode(values)
-		req = urllib2.Request('http://js.189.cn/nmall/product/queryProductList.do', data)
-		response = urllib2.urlopen(req)
-		the_page = response.read()
-		pj = json.loads(the_page)
-
-		pageTotal = pj['pageCount']
-
-		for offer in pj['offerList']:
-			item = CrawlerItem()
-			item['url'] = 'http://js.189.cn/nmall/product/phone/'+offer['FNUMBER']+'.html#dinfo_2'
-			item['title'] = offer['FNUMBER']
-			item['table'] = json.dumps(offer, ensure_ascii=False ).encode('utf-8')
-			item['table2'] = ''
-			item['need_know'] = ''
-			item['faq'] = ''
-			res_items.append(item)
-
+	def get_SXP_LIST(self, prefix, values):
+		SXPList = []
+		pageTotal, res_items = self.get_SinglePage_SXPList(1,prefix,  values)
+		SXPList+=(res_items)
 		for i in range(2,pageTotal+1):
-			res_items.append(self.process_ZhongDuan(i))
-
-		return res_items
-	
+			values['pageindex'] = str(i)
+			pt, res_items = self.get_SinglePage_SXPList(i,prefix,  values)
+			SXPList+=(res_items)
+		return SXPList
+	def get_SinglePage_SXPList(self, pageindex, prefix, values):
+		res_items = []
+		pj = json.loads(post(prefix, values))
+		pageTotal = pj['pageCount']
+		for offer in pj['offerList']:
+			res_items.append(offer['FNUMBER'])
+		return pageTotal, res_items
