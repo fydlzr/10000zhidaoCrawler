@@ -24,15 +24,15 @@ def getFirstString(tag):
 	for s in tag.stripped_strings:
 		return s
 
-def getList(tag):
+def getListSingle(tag):
 	l = []
 	for s in tag.stripped_strings:
-		l.append(s)
+		if s!="":l.append(s)
 	return l
-def getList2(tag):
-	l = []
+def getListString(tag):
+	l = ''
 	for s in tag.stripped_strings:
-		l.append(s)
+		l += s
 	return l
 def getList(tags):
 	l = []
@@ -41,6 +41,7 @@ def getList(tags):
 		flag = False
 		v = ''
 		for s in tag.stripped_strings:
+			if s=='':continue
 			if flag==False:
 				l.append(s)
 				flag = True
@@ -57,14 +58,16 @@ def post(url, parameter):
 
 class A189spSpider(scrapy.Spider):
 	name = "189sp"
-	allowed_domains = ["js.189.cn"]
+	allowed_domains = []
 	
 	start_urls = (
-		'http://js.189.cn/nmall/broadband/index',
-		'http://js.189.cn/flowZone/index.jsp',
-		'http://js.189.cn/nmall/productList/index?queryType=packageCondition&match4G=4G',
-		'http://js.189.cn/nmall/productList/index?queryType=mobileCondition&mobile=apple',
+		# 'http://js.189.cn/nmall/broadband/index',
+		# 'http://js.189.cn/flowZone/index.jsp',
+		# 'http://js.189.cn/nmall/productList/index?queryType=packageCondition&match4G=4G',
+		# 'http://js.189.cn/nmall/productList/index?queryType=mobileCondition&mobile=apple',
 		# 'http://js.189.cn/nmall/product/phone/SXP20151109003782.html#dinfo_2',
+		'http://www.189.cn/dqmh/tianyiMall/searchMallAction.do?method=shopPhone',
+		# 'http://www.189.cn/products/0165417854.html',
 	)
 
 	def parse(self, response):
@@ -74,7 +77,7 @@ class A189spSpider(scrapy.Spider):
 			bodys = response.body.split('<html>')
 			
 			for body in bodys:
-				soup = bs(body)
+				soup = bs(body,"lxml")
 				kd_xqinfo_res = soup.find('div', class_='kd_xqinfo')
 				baby_info_res = soup.find('div', class_='baby_info')
 				table_1_res = soup.find('table', class_='table_1')
@@ -108,6 +111,92 @@ class A189spSpider(scrapy.Spider):
 			for it in res_items:
 				items.append(it)
 				yield it
+		#终端get_ZhongDuan_SXPList
+		elif 'method=shopPhone' in response.url:
+			values = {'method':'shopPhone',\
+			'xspLeibie':'手机',\
+			'pageSize':'555',\
+			'internal_search' : '1',\
+			'shopId':'10001',\
+			'currentPage':1}		
+
+			body = post('http://www.189.cn/dqmh/tianyiMall/searchMallAction.do', values)
+
+			findPhone = re.compile('salesCode":"\d{10}"')
+			phones = findPhone.findall(body)
+			for p in phones:
+				pp = p.split(":")[1].replace("\"","")
+				yield Request('http://www.189.cn/products/'+pp+'.html', callback=self.parse)
+		elif 'http://www.189.cn/products/' in response.url:
+			bodys = response.body.split('<html>')
+			
+			for body in bodys:
+				soup = bs(body ,"lxml")
+				item = CrawlerItem()
+				titleBox = soup.find('div', class_='titleBox')
+				if titleBox == None:
+					titleb = soup.find('span', id = 'articleshorttitle')
+					if titleb!=None:
+						title = titleb.string
+					else:
+						title = 'None'
+				else:
+					title = getListString(titleBox)
+				item['url'] = response.url
+				if title !=None:
+					item['title'] = title  
+
+				
+
+				hidden2 = soup.find('div', id='ggcs_con_null')
+				if hidden2==None:
+					continue
+				kv={}
+				price = soup.find('span', id='mall_price')
+				if price == None:
+					kv['price'] = 'None'
+				else:
+					kv['price'] = price.string.encode('utf-8')
+				canshu_s = hidden2.find_all('table')
+				if canshu_s==None:
+					for s in hidden2.stripped_strings:
+						ss = s.split('：')
+						kv[ss[0]] = ' '.join(t for t in ss[1:])
+				else:
+					for canshu in canshu_s:
+						if canshu == None:
+							for s in hidden2.stripped_strings:
+								ss = s.split('：')
+								kv[ss[0]] = ' '.join(t for t in ss[1:])
+						else:
+							tbody = canshu.find('tbody')
+							tr_s = tbody.find_all('tr')
+							for tr in tr_s:
+								td_s = getListSingle(tr)
+								if len(td_s)%2==0:
+									i = 0
+									while i<len(td_s):
+										j = i+1
+										while j<len(td_s):
+											if td_s[j]!="":
+												kv[td_s[i]] = td_s[j]
+												break
+											j+=1
+										i = j+1
+								else:
+									tstr = ''
+									for t in td_s[1:]:
+										tstr += t
+									if tstr!="":
+										kv[td_s[0]] = tstr
+				item['table2'] = json.dumps(kv,ensure_ascii=False).encode('utf-8')
+
+				item['table'] = ''
+				item['need_know'] = ''
+				item['faq'] = ''
+				items.append(item)
+				yield item
+				break
 
 		#终端get_ZhongDuan_SXPList
 		elif 'queryType=mobileCondition' in response.url:
@@ -128,7 +217,7 @@ class A189spSpider(scrapy.Spider):
 			bodys = response.body.split('<html>')
 			
 			for body in bodys:
-				soup = bs(body)
+				soup = bs(body,"lxml")
 				item = CrawlerItem()
 				baby_name_res = soup.find('div', class_='baby_name')
 				title = getFirstString(baby_name_res)

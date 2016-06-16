@@ -60,7 +60,7 @@ class CrawlerPipeline(object):
 			fout.write(self.getOutputStr(item, 'table', used_key))
 			fout.close()
 		else:
-			fout = open('out/' + item['title']+'.txt','w')
+			fout = open('out/' + item['url'].split('/')[-1]+'.txt','w')
 			fout.write(self.getOutputStr(item))
 			fout.close()
 
